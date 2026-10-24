@@ -2,11 +2,12 @@
 
 | Item | Value |
 |---|---|
-| Written | 2026-10-24 |
+| Written | 2026-10-24. Revised 2026-10-24 after the owner's decisions (section 7.7). |
 | Status | Guideline for the agent that writes the Ansible role and the validation tool. It is not the role. |
 | Applies to | One EKS managed-node-group node, Amazon Linux 2023 EKS-optimized AMI, `c6i.xlarge`, amd64, Kubernetes 1.37 (see `docs/SPEC.md` sections 2 and 4). |
 | Benchmark | CIS Amazon Linux 2023 Benchmark v1.0.0 (released 2023-06-26), Level 1 Server. |
 | Control ID format | `CIS-AL2023-1.0.0:<number>`, for example `CIS-AL2023-1.0.0:3.2.1`. The table rows below show only `<number>`. |
+| Owner decisions | Level 1 Server only. MOTD wording approved. Controls 1.8 and 4.6.6 skipped. PAM (4.4.x) left unchanged. SSH by a downloaded AWS key pair only, EC2 Instance Connect off (confirmed 2026-10-24, section 7.5). |
 | Recommendation | Use the upstream `ansible-lockdown/AMAZON2023-CIS` role, pinned to tag `1.5.0`, with an overrides file and a thin wrapper playbook. Do not write our own role. See section 6.5. |
 
 ## 1. Summary of findings
@@ -45,7 +46,7 @@ This is the end state for a node counted as hardened at CIS AL2023 v1.0.0 Level 
 
 ### 4.1 Present and required (do not remove)
 
-Installed by the EKS AMI build (`templates/al2023/provisioners/install-worker.sh`, S7): `amazon-ssm-agent`, `chrony`, `containerd`, `runc`, `kubelet`, `nodeadm`, `iptables-nft`, `nftables`, `conntrack`, `socat`, `ipvsadm`, `ec2-instance-connect` (which brings an SSH server), `nfs-utils`, `jq`, `unzip`, `wget`. Hardening must leave all of them installed and running. `amazon-ssm-agent` is how the hardening is delivered, so no control may disable it or block its network access.
+Installed by the EKS AMI build (`templates/al2023/provisioners/install-worker.sh`, S7): `amazon-ssm-agent`, `chrony`, `containerd`, `runc`, `kubelet`, `nodeadm`, `iptables-nft`, `nftables`, `conntrack`, `socat`, `ipvsadm`, `nfs-utils`, `jq`, `unzip`, `wget`. `ec2-instance-connect` is also installed by the AMI build but is removed by this guideline (section 7.5, decided 2026-10-24). Hardening must leave the rest installed and running. `amazon-ssm-agent` is how the hardening is delivered, so no control may disable it or block its network access.
 
 ### 4.2 Added by Level 1 controls
 
@@ -91,7 +92,7 @@ Each row is one Level 1 Server control of CIS Amazon Linux 2023 Benchmark v1.0.0
 
 Source for every row: CIS AL2023 v1.0.0 as implemented by S12 (role) and S14 (control file), verification from S13. Level for every row: 1 (Server). Source type: CIS, not STIG.
 
-Totals for the 179 rows: Safe 133, Safe-with-test 4, Override 12, Needs input 4, SKIP 6, N/A 13 (single-volume node, no separate partition), N/A alternative-chosen 7 (rsyslog set, journald chosen).
+Totals for the 179 rows: Safe 133, Safe-with-test 4, Override 13, Needs input 1, SKIP 8, N/A 13 (single-volume node, no separate partition), N/A alternative-chosen 7 (rsyslog set, journald chosen).
 
 ### 5.2 Overrides file
 
@@ -113,6 +114,9 @@ amzn2023cis_rule_3_2_1: false
 amzn2023cis_rule_1_8: false
 # 4.6.6: root has no password on EC2; the role asserts it does and aborts.
 amzn2023cis_rule_4_6_6: false
+# 4.4.1 / 4.4.2: owner decision, PAM stays unchanged.
+amzn2023cis_rule_4_4_1: false
+amzn2023cis_rule_4_4_2: false
 # 5.1.2.1.1 - 5.1.2.1.3: no remote journal host exists.
 amzn2023cis_rule_5_1_2_1_1: false
 amzn2023cis_rule_5_1_2_1_2: false
@@ -140,6 +144,7 @@ amzn2023cis_rsync_server: mask
 amzn2023cis_ipv6_required: true
 
 # 4.2.4: the default is derived from the connecting user (root under SSM).
+# SSH access design is in section 7.5 (decided 2026-10-24).
 amzn2023cis_sshd_allowusers: ec2-user
 
 # 6.1.11: keep the file-permission fix on, but see section 7 about the sticky-bit step.
@@ -222,7 +227,7 @@ Legend for the EKS column is in section 5.1. Rows with `Override`, `SKIP`, `Need
 | 1.7.4 | permissions on /etc/motd are configured | `amzn2023cis_rule_1_7_4`; file | `stat -c '%a %U %G' /etc/motd` -> `0644 root root` | Safe |
 | 1.7.5 | permissions on /etc/issue are configured | `amzn2023cis_rule_1_7_5`; file | `stat -c '%a %U %G' /etc/issue` -> `0644 root root` | Safe |
 | 1.7.6 | permissions on /etc/issue.net are configured | `amzn2023cis_rule_1_7_6`; file | `stat -c '%a %U %G' /etc/issue.net` -> `0644 root root` | Safe |
-| 1.8 | updates, patches, and additional security software are installed (manual) | `amzn2023cis_rule_1_8`; package | `yum check-update` -> !/[0-9].* packages available/ ; !/upgrade/ | SKIP: The task runs `package: name='*' state=latest`. That updates the node in place, which fights the AMI's version locks (kernel, containerd, amazon-ec2-net-utils) and the rule that nodes change by replacement. Skip and patch by rolling the node group to a new AMI release. |
+| 1.8 | updates, patches, and additional security software are installed (manual) | `amzn2023cis_rule_1_8`; package | `yum check-update` -> !/[0-9].* packages available/ ; !/upgrade/ | SKIP: Owner decision 2026-10-24: approved. The task runs `package: name='*' state=latest`. That updates the node in place, which fights the AMI's version locks (kernel, containerd, amazon-ec2-net-utils) and the rule that nodes change by replacement. Skip and patch by rolling the node group to a new AMI release. |
 | 1.9 | system-wide crypto policy is not legacy | `amzn2023cis_rule_1_9`; shell | `/etc/crypto-policies/config` matches `/^(\|\s+)(DEFAULT\|FUTURE\|FIPS)/`, not `/^(\|\s+)LEGACY/` | Safe: DEFAULT policy. The EKS AMI only enables FIPS when built with `enable_fips`. |
 
 ### 5.2 Section 2: Services
@@ -283,32 +288,32 @@ Legend for the EKS column is in section 5.1. Rows with `Override`, `SKIP`, `Need
 | 4.1.7 | permissions on /etc/cron.d are configured | `amzn2023cis_rule_4_1_7`; file | `stat -c '%a %U %G' /etc/cron.d` -> `0700 root root` | Safe |
 | 4.1.8 | cron is restricted to authorized users | `amzn2023cis_rule_4_1_8`; file | `test -e /etc/cron.deny` -> absent; `stat -c '%a %U %G' /etc/cron.allow` -> `0600 root root` | Safe |
 | 4.1.9 | at is restricted to authorized users | `amzn2023cis_rule_4_1_9`; file | `test -e /etc/at.deny` -> absent; `stat -c '%a %U %G' /etc/at.allow` -> `0600 root root` | Safe |
-| 4.2.1 | permissions on /etc/ssh/sshd_config are configured | `amzn2023cis_rule_4_2_1`; file | `stat -c '%a %U %G' /etc/ssh/sshd_config` -> `0600 root root` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.2 | permissions on SSH private host key files are configured | `amzn2023cis_rule_4_2_2`; file | `userkeys=$(sudo find /etc/ssh/ -name *_key -type f ! -user root ); echo $userkeys` -> !/./; `groupkeys=$(sudo find /etc/ssh/ -name *_key -type f ! -group root ); echo $groupkeys` -> !/./ | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.3 | permissions on SSH public host key files are configured | `amzn2023cis_rule_4_2_3`; file | `userkeys=$(sudo find /etc/ssh/ -name *_key.pub -type f ! -user root ); echo $userkeys` -> !/./; `groupkeys=$(sudo find /etc/ssh/ -name *_key.pub -type f ! -group root ); echo $groupkeys` -> !/./ | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.4 | SSH access is limited | `amzn2023cis_rule_4_2_4`; lineinfile | `grep -Ei "^(Allow\|Deny)(Users\|Groups)" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf` -> /(?i)AllowUsers: {{ .Vars.amzn2023cis_sshd_allowusers }}/ ;  | Needs input: The default `amzn2023cis_sshd_allowusers` is derived from the connecting user (root under SSM) and can lock out ec2-user. Set it explicitly. |
-| 4.2.5 | SSH LogLevel is appropriate | `amzn2023cis_rule_4_2_5`; lineinfile | `/etc/ssh/sshd_config` matches `/LogLevel (VERBOSE\|INFO)/`, not `/^LogLevel DEBUG/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.6 | SSH PAM is enabled | `amzn2023cis_rule_4_2_6`; lineinfile | `/etc/ssh/sshd_config` matches `/^UsePAM yes/`, not `/^UsePAM no/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.7 | SSH root login is disabled | `amzn2023cis_rule_4_2_7`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitRootLogin no/`, not `/^PermitRootLogin yes/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.8 | SSH HostbasedAuthentication is disabled | `amzn2023cis_rule_4_2_8`; lineinfile | `/etc/ssh/sshd_config` matches `HostbasedAuthentication no`, not `/^HostbasedAuthentication yes/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.9 | SSH PermitEmptyPasswords is disabled | `amzn2023cis_rule_4_2_9`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitEmptyPasswords no/`, not `/^PermitEmptyPasswords yes/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.10 | SSH PermitUserEnvironment is disabled | `amzn2023cis_rule_4_2_10`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitUserEnvironment no/`, not `/^PermitUserEnvironment yes/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.11 | SSH IgnoreRhosts is enabled | `amzn2023cis_rule_4_2_11`; lineinfile | `/etc/ssh/sshd_config` matches `/IgnoreRhosts yes/`, not `/^IgnoreRhosts no/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.1 | permissions on /etc/ssh/sshd_config are configured | `amzn2023cis_rule_4_2_1`; file | `stat -c '%a %U %G' /etc/ssh/sshd_config` -> `0600 root root` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.2 | permissions on SSH private host key files are configured | `amzn2023cis_rule_4_2_2`; file | `userkeys=$(sudo find /etc/ssh/ -name *_key -type f ! -user root ); echo $userkeys` -> !/./; `groupkeys=$(sudo find /etc/ssh/ -name *_key -type f ! -group root ); echo $groupkeys` -> !/./ | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.3 | permissions on SSH public host key files are configured | `amzn2023cis_rule_4_2_3`; file | `userkeys=$(sudo find /etc/ssh/ -name *_key.pub -type f ! -user root ); echo $userkeys` -> !/./; `groupkeys=$(sudo find /etc/ssh/ -name *_key.pub -type f ! -group root ); echo $groupkeys` -> !/./ | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.4 | SSH access is limited | `amzn2023cis_rule_4_2_4`; lineinfile | `grep -Ei "^(Allow\|Deny)(Users\|Groups)" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf` -> /(?i)AllowUsers: {{ .Vars.amzn2023cis_sshd_allowusers }}/ ;  | Override: Set `amzn2023cis_sshd_allowusers: ec2-user` (the default is derived from the connecting user, root under SSM, and would lock out `ec2-user`). Applies to the downloaded-key SSH access in section 7.5 (decided 2026-10-24). |
+| 4.2.5 | SSH LogLevel is appropriate | `amzn2023cis_rule_4_2_5`; lineinfile | `/etc/ssh/sshd_config` matches `/LogLevel (VERBOSE\|INFO)/`, not `/^LogLevel DEBUG/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.6 | SSH PAM is enabled | `amzn2023cis_rule_4_2_6`; lineinfile | `/etc/ssh/sshd_config` matches `/^UsePAM yes/`, not `/^UsePAM no/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.7 | SSH root login is disabled | `amzn2023cis_rule_4_2_7`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitRootLogin no/`, not `/^PermitRootLogin yes/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.8 | SSH HostbasedAuthentication is disabled | `amzn2023cis_rule_4_2_8`; lineinfile | `/etc/ssh/sshd_config` matches `HostbasedAuthentication no`, not `/^HostbasedAuthentication yes/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.9 | SSH PermitEmptyPasswords is disabled | `amzn2023cis_rule_4_2_9`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitEmptyPasswords no/`, not `/^PermitEmptyPasswords yes/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.10 | SSH PermitUserEnvironment is disabled | `amzn2023cis_rule_4_2_10`; lineinfile | `/etc/ssh/sshd_config` matches `/^PermitUserEnvironment no/`, not `/^PermitUserEnvironment yes/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.11 | SSH IgnoreRhosts is enabled | `amzn2023cis_rule_4_2_11`; lineinfile | `/etc/ssh/sshd_config` matches `/IgnoreRhosts yes/`, not `/^IgnoreRhosts no/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
 | 4.2.14 | system-wide crypto policy is not over-ridden | `amzn2023cis_rule_4_2_14`; shell,replace | `grep -Ei "^\s*Crypto_policy" /etc/sysconfig/sshd /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*` -> !/^CRYPTO_POLICY/ | Safe: The EKS AMI build appends a Ciphers line to sshd_config (install-worker.sh); that is not the CRYPTO_POLICY override this control checks. UNVERIFIED that the role leaves that line alone. |
-| 4.2.15 | SSH warning banner is configured | `amzn2023cis_rule_4_2_15`; lineinfile | `/etc/ssh/sshd_config` matches `/^Banner /etc/issue.net/`, not `/^Banner none/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.16 | SSH MaxAuthTries is set to 4 or less | `amzn2023cis_rule_4_2_16`; lineinfile | `/etc/ssh/sshd_config` matches `/MaxAuthTries [1-4]/`, not `/MaxAuthTries (0\|[5-9])/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.17 | SSH MaxStartups is configured | `amzn2023cis_rule_4_2_17`; lineinfile | `/etc/ssh/sshd_config` matches `/^MaxStartups 10:30:60/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.18 | SSH MaxSessions is set to 10 or less | `amzn2023cis_rule_4_2_18`; lineinfile | `/etc/ssh/sshd_config` matches `/^MaxSessions ([2-9]\|10)/`, not `/^MaxSessions (1\|[1-9]{2,5})/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.19 | SSH LoginGraceTime is set to one minute or less | `amzn2023cis_rule_4_2_19`; lineinfile | `/etc/ssh/sshd_config` matches `/^LoginGraceTime ([1-9]\|[1-5][0-9])/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
-| 4.2.20 | SSH Idle Timeout Interval is configured | `amzn2023cis_rule_4_2_20`; lineinfile | `/etc/ssh/sshd_config` matches `/^ClientAliveInterval {{ .Vars.amzn2023cis_sshd_clientaliveinterval }}/` and `/^ClientAliveCountMax {{ .Vars.amzn2023cis_sshd_clientalivecountmax }}/` | Safe: sshd is present for EC2 Instance Connect; SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.15 | SSH warning banner is configured | `amzn2023cis_rule_4_2_15`; lineinfile | `/etc/ssh/sshd_config` matches `/^Banner /etc/issue.net/`, not `/^Banner none/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.16 | SSH MaxAuthTries is set to 4 or less | `amzn2023cis_rule_4_2_16`; lineinfile | `/etc/ssh/sshd_config` matches `/MaxAuthTries [1-4]/`, not `/MaxAuthTries (0\|[5-9])/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.17 | SSH MaxStartups is configured | `amzn2023cis_rule_4_2_17`; lineinfile | `/etc/ssh/sshd_config` matches `/^MaxStartups 10:30:60/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.18 | SSH MaxSessions is set to 10 or less | `amzn2023cis_rule_4_2_18`; lineinfile | `/etc/ssh/sshd_config` matches `/^MaxSessions ([2-9]\|10)/`, not `/^MaxSessions (1\|[1-9]{2,5})/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.19 | SSH LoginGraceTime is set to one minute or less | `amzn2023cis_rule_4_2_19`; lineinfile | `/etc/ssh/sshd_config` matches `/^LoginGraceTime ([1-9]\|[1-5][0-9])/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
+| 4.2.20 | SSH Idle Timeout Interval is configured | `amzn2023cis_rule_4_2_20`; lineinfile | `/etc/ssh/sshd_config` matches `/^ClientAliveInterval {{ .Vars.amzn2023cis_sshd_clientaliveinterval }}/` and `/^ClientAliveCountMax {{ .Vars.amzn2023cis_sshd_clientalivecountmax }}/` | Safe: sshd stays for key-based access (section 7.5); SSM Session Manager does not use it. 4.2.12 and 4.2.13 are L2 in the role's tags (not selected). |
 | 4.3.1 | sudo is installed | `amzn2023cis_rule_4_3_1`; package | `rpm -q sudo` -> installed | Safe |
 | 4.3.2 | sudo commands use pty | `amzn2023cis_rule_4_3_2`; lineinfile | `/etc/sudoers` matches `/^Defaults.*\suse_pty/`; `ls -1 /etc/sudoers.d/* > /dev/null 2>&1; if [ '$?' = '0' ]; then grep -c '^Defaults.*\suse_pty' /etc/sudoers.d` -> /[0-99]/ | Safe |
 | 4.3.3 | sudo log file exists | `amzn2023cis_rule_4_3_3`; lineinfile | `/etc/sudoers` matches `/^Defaults\s+logfile="/var/log/sudo.log"/`; `grep -c '^Defaults logfile=/var/log/*.log' /etc/sudoers.d/.*/` -> /[1:99]/ | Safe |
 | 4.3.4 | re-authentication for privilege escalation is not disabled globally | `amzn2023cis_rule_4_3_4`; replace | `/etc/sudoers` matches , not `/!authenticate/`; `grep authenticate /etc/sudoers.d/*` -> !/!authenticate/ | Safe: Removes `!authenticate` only. The SSM agent's sudoers.d file uses NOPASSWD, which this does not touch (UNVERIFIED). |
 | 4.3.5 | sudo authentication timeout is configured correctly | `amzn2023cis_rule_4_3_5`; shell,lineinfile,replace | `grep -rP "timestamp_timeout=\K[0-9]*" /etc/sudoers*` -> !/timestamp_timeout=(-1\|1[6-9]\|[2-9][0-9]\|[1-9][0-9]{2,})/ ; | Safe |
 | 4.3.6 | access to the su command is restricted | `amzn2023cis_rule_4_3_6`; group,lineinfile | `/etc/pam.d/su` matches `/^auth.*required.*pam_wheel.so\suse_uid\sgroup={{ .Vars.amzn2023cis_sugroup }}/`; `grep {{ .Vars.amzn2023cis_sugroup }} /etc/group` -> /^{{ .Vars.amzn2023cis_sugroup }}:x:\d+:$/ ; !/^{{ .Vars.amz | Safe: Uses an empty group (`nosugroup`), so nobody gains su access. |
-| 4.4.1 | custom authselect profile is used (manual) | `amzn2023cis_rule_4_4_1`; command | `head -1 /etc/authselect/authselect.conf \| grep 'custom/'` -> /^custom\/.*/ | Needs input: 4.4.1 only acts when `amzn2023cis_authselect_custom_profile_create` is true (default false). Decide: leave false and record not-applicable, or enable and test PAM login. |
-| 4.4.2 | authselect includes with-faillock | `amzn2023cis_rule_4_4_2`; shell,command,lineinfile | `/etc/pam.d/password-auth` matches `/auth\s+required\s+pam_faillock.so/` and `/auth\s+required\s+pam_faillock.so preauth silent/`; `/etc/pam.d/system-auth` matches `/auth\s+required\s+pam_faillock.so/` and `/auth\s+required\s+pam_faillock.so preauth silent/` | Needs input: 4.4.1 only acts when `amzn2023cis_authselect_custom_profile_create` is true (default false). Decide: leave false and record not-applicable, or enable and test PAM login. |
+| 4.4.1 | custom authselect profile is used (manual) | `amzn2023cis_rule_4_4_1`; command | `head -1 /etc/authselect/authselect.conf \| grep 'custom/'` -> /^custom\/.*/ | SKIP: Owner decision 2026-10-24: PAM is left unchanged. Set `amzn2023cis_rule_4_4_1: false`. Reason: nodes have no password logins (keys and SSM only), and an authselect change is the one change that can lock out every interactive login. Note 4.5.1 to 4.5.4 also edit PAM files (section 7.7, question 1). |
+| 4.4.2 | authselect includes with-faillock | `amzn2023cis_rule_4_4_2`; shell,command,lineinfile | `/etc/pam.d/password-auth` matches `/auth\s+required\s+pam_faillock.so/` and `/auth\s+required\s+pam_faillock.so preauth silent/`; `/etc/pam.d/system-auth` matches `/auth\s+required\s+pam_faillock.so/` and `/auth\s+required\s+pam_faillock.so preauth silent/` | SKIP: Owner decision 2026-10-24: PAM is left unchanged. Set `amzn2023cis_rule_4_4_2: false`. Reason: nodes have no password logins (keys and SSM only), and an authselect change is the one change that can lock out every interactive login. Note 4.5.1 to 4.5.4 also edit PAM files (section 7.7, question 1). |
 | 4.5.1 | password creation requirements are configured | `amzn2023cis_rule_4_5_1`; lineinfile | `/etc/security/pwquality.conf` matches `{{ .Vars.amzn2023cis_pam_password_minlen }}` and `{{ .Vars.amzn2023cis_pam_password_minclass }}`; `/etc/pam.d/password-auth` matches `/password\s+requisite\s+pam_pwquality.so try_first_pass local_users_only enforce_for_root retry=[3-5]/` | Safe: PAM changes affect interactive password logins; the node uses key and SSM access. |
 | 4.5.2 | lockout for failed password attempts is configured | `amzn2023cis_rule_4_5_2`; lineinfile | `/etc/pam.d/password-auth` matches `/^account\s*required\s*pam_faillock.so/`; `/etc/pam.d/system-auth` matches `/^account\s*required\s*pam_faillock.so/` | Safe: PAM changes affect interactive password logins; the node uses key and SSM access. |
 | 4.5.3 | password reuse is limited | `amzn2023cis_rule_4_5_3`; lineinfile | `/etc/pam.d/system-auth` matches `/^password\s+(requisite\|sufficient)\s+pam_pwhistory.so.*remember=\b(?:[1-5]\d+\|5)\b/` | Safe: PAM changes affect interactive password logins; the node uses key and SSM access. |
@@ -322,7 +327,7 @@ Legend for the EKS column is in section 5.1. Rows with `Override`, `SKIP`, `Need
 | 4.6.3 | default user shell timeout is 900 seconds or less | `amzn2023cis_rule_4_6_3`; blockinfile | `/etc/profile.d/tmout.sh` matches `/TMOUT=([1-8][0-9]{0,2}\|900)/` and `/readonly TMOUT/` | Safe: TMOUT=900 ends idle Session Manager shells after 15 minutes. |
 | 4.6.4 | default group for the root account is GID 0 | `amzn2023cis_rule_4_6_4`; user | user:root | Safe |
 | 4.6.5 | default user umask is 027 or more restrictive | `amzn2023cis_rule_4_6_5`; lineinfile,shell,replace,copy | `/etc/profile` matches `/^(\s+\|)umask\s0(2\|7)(2\|7)/`, not `/^(\s+\|)umask\s[1-7][0-7][0-7]/` | Safe |
-| 4.6.6 | root password is set | `amzn2023cis_rule_4_6_6`; audit/warn only | `passwd -S root \| grep "Password set"` -> /^root.*Password set.*crypt/ | SKIP: The role asserts that root has a password and fails the whole run if not. On EC2 the root password is normally locked (UNVERIFIED). Set `amzn2023cis_rule_4_6_6: false`; setting a root password is worse than the deviation. |
+| 4.6.6 | root password is set | `amzn2023cis_rule_4_6_6`; audit/warn only | `passwd -S root \| grep "Password set"` -> /^root.*Password set.*crypt/ | SKIP: Owner decision 2026-10-24: approved. The role asserts that root has a password and fails the whole run if not. On EC2 the root password is normally locked (UNVERIFIED). Set `amzn2023cis_rule_4_6_6: false`; setting a root password is worse than the deviation. |
 
 ### 5.5 Section 5: Logging
 
@@ -387,7 +392,7 @@ The 64 Level 2 Server controls are out of scope for `docs/SPEC.md`. Appendix A l
 | 5.2.3.20 (audit config immutable) | After the first run the rules cannot be reloaded without a reboot. The role re-runs on a schedule, so later runs would fail to load changed rules until reboot. Consequence inferred from the control title. UNVERIFIED on a node. |
 | 5.2.2.3 (disk-full action) | The role default `amzn2023cis_auditd_admin_space_left_action` is `halt`, which stops the only node if the disk fills. |
 | 3.1.2 to 3.1.5 (DCCP, SCTP, RDS, TIPC off) | Would block SCTP-based workloads on the host. Podium does not use SCTP. |
-| 4.2.12, 4.2.13 (SSH X11 and TCP forwarding off) | `AllowTcpForwarding no` blocks `ssh -L` through EC2 Instance Connect. SSM port forwarding is unaffected. |
+| 4.2.12, 4.2.13 (SSH X11 and TCP forwarding off) | `AllowTcpForwarding no` blocks `ssh -L` over the key-based SSH path. SSM port forwarding is unaffected. |
 | 1.1.1.1, 1.1.1.2 (squashfs, udf off) | Probably harmless; whether SOCI or any image path needs squashfs is UNVERIFIED. |
 | 1.1.3.1 to 1.1.7.1 (separate partitions) | Needs extra EBS volumes in the launch template. Mount options such as nodev or noexec on `/var` can break container runtimes and CSI helpers. UNVERIFIED. |
 
@@ -440,6 +445,8 @@ Notes:
 - Where CIS and the STIG disagree on a banner, CIS wins: it only asks for site-defined text, without operating-system identifiers, so the custom text below meets it.
 
 ### 6.4 Custom MOTD template and task
+
+Wording approved by the owner on 2026-10-24.
 
 Plain text, no government wording, no company names. The upstream audit for 1.7.1 to 1.7.3 rejects the words CentOS, RHEL, Red Hat, x86_64, Linux and Amazon (any case of the first letter), so the text avoids them.
 
@@ -503,10 +510,10 @@ Every `SKIP` and `Override` below is a deviation to record in `docs/DECISIONS.md
 |---|---|---|---|---|
 | 3.2.1 | IP forwarding off | Pod-to-pod and pod-to-service routing and kube-proxy need `net.ipv4.ip_forward=1`. The EKS AMI sets it in `/etc/sysctl.d/99-kubernetes-cri.conf`, and the kubelet unit also sets `iptables -P FORWARD ACCEPT` (S7). | Skip. Keep forwarding at 1. Record the check `sysctl -n net.ipv4.ip_forward` equals `1` as the replacement. Do not use `amzn2023cis_is_router: true` unless you accept that it also skips 3.2.2. If the control were applied, the role would write `/etc/sysctl.d/60-netipv4_sysctl.conf` with `net.ipv4.ip_forward = 0` and its handler runs `sysctl --system`; the AMI's `99-` file is read later in name order and would probably win, but that is UNVERIFIED and no reason to apply the control. | SKIP |
 | 1.6.1.3, 1.6.1.4 | SELinux state | The role default sets `enforcing`. The EKS AMI lacks `container-selinux`, so enforcing prevents `nodeadm` and the node from joining (S8). | `amzn2023cis_selinux_enforce: permissive` (AMI default; satisfies "not disabled"). Do not add 1.6.1.5. | Override |
-| 1.8 | Install all updates | `package: name='*' state=latest` updates in place. The AMI version-locks kernel, containerd and `amazon-ec2-net-utils`, disables cloud-init package updates to avoid version skew, and the project replaces nodes rather than patching them. | Skip. Patch by moving the node group to a newer AMI release. | SKIP |
+| 1.8 | Install all updates | `package: name='*' state=latest` updates in place. The AMI version-locks kernel, containerd and `amazon-ec2-net-utils`, disables cloud-init package updates to avoid version skew, and the project replaces nodes rather than patching them. | Skip. Patch by moving the node group to a newer AMI release. | SKIP (owner approved 2026-10-24) |
 | 3.3.7 | Strict reverse-path filter | The VPC CNI init sets the primary interface to loose mode itself (S18); the kernel takes the larger of the `all` and per-interface values. Secondary ENIs follow `default` (1). Whether this breaks cross-node pod traffic here is untested. | Apply, then test pod-to-pod across nodes (needs two nodes) and pod-to-service on the single node. If it fails, set `net.ipv4.conf.default.rp_filter = 2` in a drop-in and record the deviation. UNVERIFIED. | Test |
 | 2.2.16, 2.2.17, 2.2.18 | NFS, rpcbind, rsync | `nfs-utils` is installed by the EKS AMI for EFS and NFS volumes. Removing it breaks those mounts. | Mask `nfs-server`, `rpcbind.socket`, `rpcbind` and `rsyncd`; never remove the package. The upstream audit insists the package is absent (section 8.5). | Override |
-| 4.6.6 | Root password set | The role asserts it and aborts the whole run when root has no password. EC2 root accounts normally have none (UNVERIFIED on this AMI). | Skip. Do not set a root password. Root access is by SSM only. | SKIP |
+| 4.6.6 | Root password set | The role asserts it and aborts the whole run when root has no password. EC2 root accounts normally have none (UNVERIFIED on this AMI). | Skip. Do not set a root password. Root access is by SSM only. | SKIP (owner approved 2026-10-24) |
 | 5.1.1.x / 5.1.2.x | Logging backend | AL2023 uses journald; rsyslog is not installed by default (S3). | `amzn2023cis_syslog_service: journald`. 5.1.1.x become not-applicable. | Override |
 | 5.1.2.1.1 to 5.1.2.1.3 | Journal upload to a remote host | No log host exists. The role default URL is a private placeholder. | Skip. Revisit when central logging exists. Keep 5.1.2.1.4. | SKIP |
 | 5.1.2.6 | Journal size limits | Default `SystemKeepFree=100G` exceeds a typical root volume; journald would stop writing persistent logs. | Set `SystemMaxUse` and `SystemKeepFree` to values that fit the volume (section 5.2). | Override |
@@ -515,8 +522,8 @@ Every `SKIP` and `Override` below is a deviation to record in `docs/DECISIONS.md
 | 1.1.3.2 to 1.1.7.3 | Options on separate partitions | The node has one root volume, so the role skips these. | Record as not-applicable. If separate volumes are added, test `/var` options with containerd and the CSI driver first. UNVERIFIED. | N/A |
 | 1.4.1 | Bootloader permissions | Depends on UEFI or BIOS boot and the grub path on this AMI. | Set `amzn2023cis_legacy_boot` after checking `test -d /sys/firmware/efi`. UNVERIFIED. | Needs input |
 | 2.1.2 | chrony configuration | Default servers are public pools. Amazon Time Sync at 169.254.169.123 works without internet. The role's template is Debian-derived. | Override the server list; test `chronyc sources`. | Override |
-| 4.2.4 | SSH access limit | The default allow-list comes from the connecting user, which is root under SSM, and could lock out `ec2-user` (EC2 Instance Connect). | Set `amzn2023cis_sshd_allowusers` explicitly, or leave Instance Connect out and note it. | Needs input |
-| 4.4.1, 4.4.2 | authselect profile | The custom-profile step runs only when `amzn2023cis_authselect_custom_profile_create` is true (default false). PAM changes are the one change that can lock out interactive logins. | Decide with the owner; recommend leaving false and recording not-applicable, since there are no password logins. | Needs input |
+| 4.2.4 | SSH access limit | The default allow-list comes from the connecting user, which is root under SSM, and would lock out `ec2-user`. | Set `amzn2023cis_sshd_allowusers: ec2-user` (see section 7.5). | Override |
+| 4.4.1, 4.4.2 | authselect profile | Owner decision 2026-10-24: PAM unchanged. The custom-profile step runs only when `amzn2023cis_authselect_custom_profile_create` is true (default false); 4.4.2 selects a faillock feature. PAM changes can lock out interactive logins. | Skip both (`amzn2023cis_rule_4_4_1: false`, `amzn2023cis_rule_4_4_2: false`). Access is by key and SSM, not password. | SKIP |
 | 4.6.3 | Shell idle timeout | `TMOUT=900` ends idle Session Manager shells after 15 minutes. | Accept. | Safe, noted |
 | 6.1.11 to 6.1.13 | World-writable and unowned file scans | The file-fix step excludes `containerd` and `kubelet/pods` paths, but the sticky-bit step runs over every `df --local` mount, which may include container overlay mounts. The `find` scans are heavy on a busy node. | Keep `amzn2023cis_no_world_write_adjust: false`. Consider skipping the sticky-bit step. Run the heavy audits less often than the schedule. UNVERIFIED that `df` lists overlay mounts on this node. | Override |
 | 3.1.1 | IPv6 | Disabling IPv6 breaks IPv6 and dual-stack clusters. | Keep `amzn2023cis_ipv6_required: true`. | Safe, noted |
@@ -554,19 +561,97 @@ These cannot be fixed by Ansible after the fact, or are better set before boot. 
 | Tag the association targets | The association selects nodes by tag | Per SPEC P2.2.3 |
 | Root volume size and encryption | Chosen at launch. The EKS AMI builds with a 20 GiB default (S7); size for images and logs. | |
 | Metadata options (require IMDSv2) | A launch-template setting. A search summary of the AL2 transition FAQ says AL2023 enables IMDSv2 by default (S6; not confirmed); the hop-limit choice affects whether pods can reach metadata and is for the infra document. | Hop-limit effect UNVERIFIED |
-| No SSH key pair, and no inbound 22 in the node security group | SSM is the access path | |
+| EC2 key pair by name in the launch template; inbound 22 only from the operator's address | The key pair is created outside Terraform (section 7.5). The security group is an infra setting. Decided 2026-10-24. | Details in section 7.5 |
 | Node configuration (`NodeConfig` in user data, MIME multipart) | `nodeadm` reads it at boot; the AMI also reads drop-ins from `/etc/eks/nodeadm.d/` (S7 docs) | Do not run `nodeadm init` by hand |
 | FIPS | Set at AMI build (`enable_fips`) | Not used |
 | Kernel boot arguments (`audit=1` and similar, Level 2) | Need a reboot to apply | Not in scope |
 | Separate volumes for `/var`, `/var/log`, `/home` | Block device mappings | Not in scope |
 
-### 7.5 Open decisions for the owner
+### 7.5 SSH access (decided 2026-10-24)
 
-1. Approve the banner wording in section 6.4.
-2. Confirm skipping 1.8 (in-place updates) and 4.6.6 (root password).
-3. Confirm leaving PAM (4.4.x) unchanged.
-4. Confirm whether `ec2-user` SSH access via EC2 Instance Connect is kept.
-5. Confirm Level 1 Server only.
+**Owner statement (2026-10-24):** keep EC2 Instance Connect, but SSH should only allow a key that is generated in AWS, downloaded and stored locally. **The owner confirmed on 2026-10-24 the reading below: a regular EC2 key pair, EC2 Instance Connect off, SSM Session Manager as the second way in.** (Instance Connect works by pushing temporary keys, which contradicts "only the downloaded key", so the service is dropped.)
+
+Decision:
+
+1. A regular EC2 key pair is created by a script with `aws ec2 create-key-pair`. The private key is written to a local file at mode 0400 and never printed. It does not go through Terraform, so it is not in Terraform state. (That the private key is returned only once, at creation, is general AWS behaviour I did not re-check in this task: UNVERIFIED.)
+2. Terraform's launch template refers only to the key pair name.
+3. Inbound port 22 on the node security group is open only to the operator's address. (Infra document.)
+4. EC2 Instance Connect is off, because it works by pushing temporary keys at connection time.
+5. SSM Session Manager stays as the second path in.
+
+How Instance Connect is wired (read from the `aws/aws-ec2-instance-connect-config` source, S23, not from an AL2023 node): the package installs `/opt/aws/bin/eic_run_authorized_keys` and two helper scripts, creates a locked system user `ec2-instance-connect`, and in its RPM post-install step writes a systemd drop-in `sshd.service.d/ec2-instance-connect.conf` under `/lib/systemd/system/` that starts sshd with `-o "AuthorizedKeysCommand /opt/aws/bin/eic_run_authorized_keys %u %f" -o "AuthorizedKeysCommandUser ec2-instance-connect"`. Its pre-uninstall step removes the drop-in and restarts sshd. The AL2023 package may differ from this spec file: UNVERIFIED.
+
+Implementation for the role author:
+
+| Step | Ansible | Note |
+|---|---|---|
+| Remove Instance Connect | `ansible.builtin.package: name=ec2-instance-connect state=absent` | This removes the drop-in through the package's own uninstall step. The EKS AMI installs this package on purpose in `install-worker.sh` (S7); that nothing else on the node depends on it is UNVERIFIED. |
+| Belt and braces: sshd drop-in | `ansible.builtin.copy` to `/etc/ssh/sshd_config.d/00-node-access.conf`, mode 0600, with the lines below, then a handler that validates (`sshd -t`) and restarts sshd | The ComplianceAsCode AL2023 product declares `sshd_distributed_config: "true"` and its playbooks write `/etc/ssh/sshd_config.d/00-complianceascode-hardening.conf` (S14), so a drop-in directory is in use on AL2023. sshd uses the first value it reads, so a `00-` file wins over later files and over the main file. That the stock `sshd_config` includes the directory is UNVERIFIED; check with `sshd -T`. |
+| Name the task like a control | Task name starts with `LOCAL-SSH-1 \| PATCH \|` | So the evidence parser can map it (section 8.3). These three IDs are local controls, not CIS. |
+
+Drop-in contents:
+
+```
+AuthorizedKeysCommand none
+AuthorizedKeysCommandUser none
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+AllowUsers ec2-user
+```
+
+Where the key comes from: cloud-init installs the key pair's public key into the default user's `~/.ssh/authorized_keys` at first boot (standard behaviour, UNVERIFIED on this AMI). The EKS AMI build deletes `/home/ec2-user/.ssh/authorized_keys` and `/root/.ssh/authorized_keys` and checks they are gone (`validate.sh`, S7), so no key is baked into the image. A replaced node gets the key again from the launch template, so the same local key keeps working.
+
+CIS interaction: 4.2.1 to 4.2.20 are unchanged. 4.2.7 (root login off) and 4.2.9 (no empty passwords) agree with the drop-in. 4.2.4 is the `AllowUsers` line. The CIS role writes into `/etc/ssh/sshd_config` directly with `lineinfile`; where it and the drop-in set the same option to the same value there is no conflict, and a mismatch would show up in the checks below.
+
+Local controls to add to the control list (source `local`, not CIS):
+
+| ID | Requirement | Verify |
+|---|---|---|
+| `LOCAL-SSH-1` | EC2 Instance Connect is not installed | `rpm -q ec2-instance-connect` -> not installed; `test -e /lib/systemd/system/sshd.service.d/ec2-instance-connect.conf` -> absent |
+| `LOCAL-SSH-2` | sshd does not use an external authorized-keys command and password logins are off | `sshd -T` shows `authorizedkeyscommand none`, `passwordauthentication no`, `kbdinteractiveauthentication no`, `pubkeyauthentication yes`, `permitrootlogin no` |
+| `LOCAL-SSH-3` | Keys are read only from the user's file | `sshd -T` shows `authorizedkeysfile .ssh/authorized_keys`; `sshd -T` shows `allowusers ec2-user` |
+
+(The `sshd -T` output key names are lower-cased option names; confirm the exact output on a node: UNVERIFIED.)
+
+### 7.6 Deviation register (final list of departures from upstream)
+
+One row per override, skipped control or exception. "Upstream default" is the value in the role at tag `1.5.0` unless stated. "Kind" is `skip` (control not applied), `override` (control applied with a different value), `exception` (applied as upstream, but the upstream audit or a verifier must be corrected), `addition` (not in upstream), `na` (not applicable on this node). The `Tool verdict` column is what the validation tool should report when the node matches the "We set" column.
+
+| ID | Upstream default | We set | Why | Kind | Tool verdict |
+|---|---|---|---|---|---|
+| All 64 Level 2 Server controls (Appendix A) and 5.2.4.2, 5.2.4.3 | `amzn2023cis_level_2: true`, rule variables true | `amzn2023cis_level_2: false`; each Level 2 rule variable false | Owner decision: Level 1 Server only | skip | not-applicable (out of scope; not in the control list) |
+| 3.2.1 | `amzn2023cis_rule_3_2_1: true` (sets `net.ipv4.ip_forward = 0`) | `false`; `net.ipv4.ip_forward` stays 1 | Pod networking and kube-proxy need forwarding | skip | not-applicable if `ip_forward` is 1 |
+| 1.8 | `amzn2023cis_rule_1_8: true` (`dnf` update of everything) | `false` | Nodes are replaced, not patched; AMI version locks. Owner approved 2026-10-24 | skip | not-applicable |
+| 4.6.6 | `amzn2023cis_rule_4_6_6: true` (asserts root password set; aborts run) | `false` | EC2 root has no password (UNVERIFIED on this AMI); setting one is worse. Owner approved 2026-10-24 | skip | not-applicable |
+| 4.4.1, 4.4.2 | rules true (4.4.1 acts only if `amzn2023cis_authselect_custom_profile_create`, default false) | `amzn2023cis_rule_4_4_1: false`, `amzn2023cis_rule_4_4_2: false` | Owner decision 2026-10-24: leave PAM unchanged; no password logins | skip | not-applicable |
+| 5.1.2.1.1, 5.1.2.1.2, 5.1.2.1.3 | rules true; upload URL is a private placeholder address | `false` | No remote journal host exists | skip | not-applicable |
+| 1.6.1.3, 1.6.1.4 | `amzn2023cis_selinux_enforce: enforcing` | `permissive` | Enforcing breaks the EKS AMI (container-selinux missing, S8) | override | pass if SELinux is enabled and not disabled |
+| 5.1.1.1 to 5.1.1.7 | `amzn2023cis_syslog_service: rsyslog` | `journald` | AL2023 uses journald; these controls are the alternative | override | not-applicable (alternative chosen) |
+| 5.1.2.6 | `systemmaxuse: 10M`, `systemkeepfree: 100G` | e.g. `500M` and `1G` (size to the volume) | 100G free-space floor stops journald writing on a small volume | override | pass |
+| 2.1.2 | public NTP pools | `169.254.169.123` | Amazon Time Sync, no internet needed | override | pass |
+| 1.7.1 | `amzn2023cis_rule_1_7_1: true` with `motd.j2` and generic text | `amzn2023cis_rule_1_7_1: false` plus our MOTD task (section 6.4) | Owner-approved wording | override | pass |
+| 1.7.2, 1.7.3, 4.2.15 | generic sentence in `amzn2023cis_warning_banner` | our short text, no words the audit rejects | Site-defined banner | override | pass |
+| 4.2.4 | `amzn2023cis_sshd_allowusers` derived from connecting user | `ec2-user` | Root under SSM would lock out the SSH user. Decided 2026-10-24 (section 7.5) | override | pass |
+| 6.1.11 | `amzn2023cis_no_world_write_adjust: true` | `false` | Avoid touching container overlay mounts | override | pass |
+| 1.3.1, 1.3.2, 1.3.3 | AIDE scans everything | exclude container and log paths; build the database asynchronously | I/O and noise on a container host. Exclusion variables UNVERIFIED | override | pass |
+| 2.2.16, 2.2.17, 2.2.18 | `mask` (already the default) | keep `mask`; never `remove` | `nfs-utils` is needed for EFS and NFS volumes. The upstream audit expects the package absent | exception | pass if masked or absent |
+| 3.3.7 | strict reverse-path filter | apply, then test pod traffic; fallback `default.rp_filter = 2` | VPC CNI interaction untested | exception (test) | pass |
+| 1.1.2.2 to 1.1.2.4 | apply | apply, then test association and replacement | `noexec` on `/tmp` is untested here | exception (test) | pass |
+| 1.4.1 | `amzn2023cis_legacy_boot: false` | set from the real boot mode | Depends on UEFI or BIOS | override | pass |
+| 1.1.3.2 to 1.1.7.3 (13 controls) | apply to separate partitions if they exist | no change; the role skips them | Single root volume | na | not-applicable |
+| 3.1.1 | `amzn2023cis_ipv6_required: true` | keep `true` | IPv6 and dual-stack clusters | exception | pass |
+| Manual controls (1.2.1, 1.2.3, 2.4, 3.1.1, 4.4.1, 5.1.1.2, 5.1.1.5, 5.1.2.5, 5.1.2.6, 5.1.2.7, 5.3, 6.1.13; 1.8 and 5.1.2.1.1 to 5.1.2.1.3 are above) | role warns or checks | no change | Benchmark marks them Manual | exception | not-applicable with reason `manual` unless a real check is given |
+| 2.2.2, 2.2.4, 2.2.6, 2.2.9, 2.3.3, 2.2.18 | upstream goss package names are wrong (section 8.5) | use the corrected checks | Audit defects | exception | pass or fail on the corrected check |
+| `LOCAL-SSH-1` to `LOCAL-SSH-3` | not in upstream | remove `ec2-instance-connect`; sshd drop-in | Owner decision 2026-10-24 on SSH | addition | pass |
+| Skip tags and Ansible runtime | none | `ansible.cfg` `[tags] skip`, pinned ansible-core 2.16.1+, vendored collections | SSM document has no tags parameter; AL2023 package too old | addition | not a control |
+
+### 7.7 Open questions for the owner
+
+1. PAM: you asked for 4.4.x to be left alone. Controls 4.5.1 to 4.5.4 (password quality, lockout, reuse, hashing) also edit the PAM files `system-auth` and `password-auth` according to the upstream audit. Should they be skipped too, or is "PAM unchanged" meant to cover only 4.4.x? Until answered, this guideline applies 4.5.x.
+(Decisions already given and recorded: MOTD wording approved; 1.8 and 4.6.6 skipped; 4.4.x skipped; SSH by downloaded key pair with Instance Connect off; Level 1 Server only.)
 
 ## 8. Verification
 
@@ -706,20 +791,22 @@ Role and wrapper:
 - [ ] Role pinned to `ansible-lockdown/AMAZON2023-CIS` tag `1.5.0` (commit `3a89ab3853926c11327591d58416c020c00a8717`), vendored with its three collections; no Git access needed on the node.
 - [ ] ansible-core 2.16.1 or newer is available on the node before the playbook runs, and this is tested on a freshly launched EKS node.
 - [ ] Overrides file contains every override in section 5.2 and every Level 2 switch-off in Appendix A.
-- [ ] Controls 3.2.1, 1.8, 4.6.6, 5.1.2.1.1, 5.1.2.1.2 and 5.1.2.1.3 are skipped; `amzn2023cis_selinux_enforce` is `permissive`; the nodes show `net.ipv4.ip_forward = 1` and SELinux not disabled after a run.
+- [ ] Controls 3.2.1, 1.8, 4.6.6, 4.4.1, 4.4.2, 5.1.2.1.1, 5.1.2.1.2 and 5.1.2.1.3 are skipped; `amzn2023cis_selinux_enforce` is `permissive`; the nodes show `net.ipv4.ip_forward = 1` and SELinux not disabled after a run.
 - [ ] The node joins the cluster and reports `Ready` after the first run, after a second run, and after a node replacement.
 - [ ] A second consecutive run reports no changes (SPEC P3.1.2); any remaining changing task is fixed or listed with a reason.
 - [ ] `ansible-lint` and `ansible-playbook --syntax-check` pass (SPEC P3.1.4).
 - [ ] The custom MOTD is installed, contains none of the words the upstream audit rejects, and `/etc/motd` is `0644 root root`.
 - [ ] The wrapper writes `/var/lib/node-hardening/controls.jsonl` and `run.json`, and the files reach S3.
 - [ ] Every deviation in section 7.1 marked `SKIP` or `Override` has an entry in the role README and `docs/DECISIONS.md` (SPEC P3.1.3).
+- [ ] Every row of the deviation register (section 7.6) is implemented in the overrides file or wrapper, and appears in the control list with the same disposition.
+- [ ] SSH (decided 2026-10-24): the `ec2-instance-connect` package is absent, `sshd -T` shows no authorized-keys command and no password authentication, the downloaded key logs in as `ec2-user`, and a replaced node accepts the same key. The private key never appears in Terraform state, logs or output.
 - [ ] The three `Test` items (3.3.7, 1.1.2.2 to 1.1.2.4) were tested and the result is recorded.
 - [ ] SSM agent, kubelet and containerd are not restarted by a run (check unit start times before and after).
 - [ ] Open items marked UNVERIFIED in this file are resolved or accepted by the owner.
 
 Verification:
 
-- [ ] The control list has 179 entries (one per Level 1 control), each with an `id`, a disposition and a check.
+- [ ] The control list has 179 CIS entries (one per Level 1 control) plus the three `LOCAL-SSH-` entries, each with an `id`, a disposition and a check.
 - [ ] The tool prints pass, fail or not-applicable for every ID and no percentage.
 - [ ] The tool treats the defects in section 8.5 correctly, in particular 2.2.16, 3.2.1 and the manual controls.
 - [ ] The goss JSON from a real node was inspected once to confirm the `meta` and `title` fields (section 8.3).
@@ -752,6 +839,8 @@ Read on 2026-10-23 and 2026-10-24. "Read" means I opened and read the page or fi
 | S19 | https://github.com/ansible-collections/ansible.posix `plugins/callback/`; https://github.com/ansible/ansible `lib/ansible/config/base.yml` | read 2026-10-24 | `json` and `jsonl` callbacks exist; `TAGS_RUN` and `TAGS_SKIP` settings. |
 | S20 | https://github.com/goss-org/goss `outputs/json.go` (Apache-2.0) | read 2026-10-24 | goss JSON fields. |
 | S21 | CIS Amazon Linux 2023 Benchmark v1.0.0 PDF | not accessible | Needs a free registration. Not read. Control titles and levels come from S12 and S14 only. |
+| S23 | https://github.com/aws/aws-ec2-instance-connect-config (Apache-2.0), tarball; last push 2024-06-13 | read | How Instance Connect wires into sshd (`rpmsrc/SPECS/generic.spec`, `src/rpm_systemd`). Source of the upstream package, not the AL2023 build. |
+| S24 | https://docs.aws.amazon.com/linux/al2023/ug/ssh-host-key.html | page read 2026-10-24 | AL2023 sshd defaults: `ssh-rsa` signatures disabled, `UseDNS=no`. Other defaults not on the page. |
 | S22 | `docs/SPEC.md` (v0.5) and `PROJECT.md` in this repository | read | Scope, Level 1 Server, deviation rule, acceptance criteria P3.1 to P3.3. |
 
 ## Appendix A. Level 2 switch-offs for the overrides file
