@@ -6,6 +6,7 @@
 | 0.2 | 2026-10-24 | Cloudflare DNS moves out of Terraform into an agent and a skill. Adds the reporter port (4318) and the DNS-only hostname, the DNS-01 secret handling, agent-safe Terraform execution, the image build task, the Kubernetes MCP task, a single node on Kubernetes 1.37. Still provisional until the open questions in section 9 are answered. |
 | 0.3 | 2026-10-24 | cert-manager uses the HTTP-01 solver, so no Cloudflare token is stored in the cluster. The first certificate test moves after the DNS record exists. |
 | 0.4 | 2026-10-24 | Kubernetes 1.37 confirmed available. Node is a `c6i.xlarge`. The Kubernetes MCP server is `containers/kubernetes-mcp-server`, pinned, read-only, behind a custom role. AWS credentials are the user's named profile. |
+| 0.5 | 2026-10-24 | Kubernetes MCP server settings follow the project's current docs: a TOML config file with `read_only` and a denied-resources list, not a `--read-only` flag. Pinned to v0.0.69. |
 
 This project stands up a hardened Kubernetes platform on AWS from nothing and deploys [Podium](https://github.com/eengelking/podium) onto it. Terraform creates the network and an EKS cluster. Ansible hardens the nodes and keeps them hardened as they are replaced. Argo CD is bootstrapped and deploys Podium from a Helm chart in this repo. cert-manager issues a Let's Encrypt certificate for `demo.edengelking.com`.
 
@@ -59,7 +60,7 @@ One person runs it from a workstation with short-lived AWS credentials. The repo
 | Reporter port | NLB TCP listener on 4318, passed straight to the pod | Podium's reporter port uses its own CA and client certificates. Anything that terminates TLS would break it. |
 | Certificates | cert-manager, HTTP-01 solver, one `staging`/`prod` variable | No Cloudflare token in the cluster. Needs the DNS record to point at the NLB and port 80 to be reachable, which the DNS-only record allows. |
 | DNS | Cloudflare, DNS-only record, managed by an agent and a skill through the Cloudflare MCP server | Shows an agent with a narrow job and guardrails. |
-| Cluster introspection | `containers/kubernetes-mcp-server`, pinned to a version, started with `--read-only` | Lets an agent check cert-manager resources without a shell on the cluster. Its default is full cluster control, so the limits come from a flag and a role, not from the server. |
+| Cluster introspection | `containers/kubernetes-mcp-server` v0.0.69, pinned, run with a committed TOML config | The most-starred Kubernetes MCP server found (about 2,200 GitHub stars when checked). Lets an agent check cert-manager resources without a shell on the cluster. Its default is full cluster control, so the limits come from its config and from a role. |
 | App packaging | A small Helm chart in this repo | Argo CD renders it. Values carry the hostname, image and settings. |
 | Image registry | GitHub Container Registry, public package | No pull secret needed. |
 | Scripting | Bash, `make` | One script or target per stage. |
@@ -307,11 +308,12 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 - **Scope:** the MCP server entry in `.mcp.json`, plus the service account, custom role and kubeconfig it uses. Nothing else in the cluster.
 - **Depends on (in-phase):** none — ready to start
 - **Acceptance:**
-  1. The server is `containers/kubernetes-mcp-server`, pinned to an exact version and not `@latest`, and started with `--read-only`.
-  2. It authenticates with a kubeconfig for a dedicated service account, using a short-lived token. The kubeconfig is gitignored.
-  3. The role is a custom one that grants only get, list and watch on `Certificate`, `CertificateRequest`, `Order`, `Challenge`, `ClusterIssuer`, and on pods and events in the add-on namespaces. It is not the built-in `view` or `cluster-reader` role.
-  4. A request to read a Secret, or to create, change or delete anything, is refused, and the test shows the refusal comes from the role as well as from the flag.
-  5. An agent can use it to report why a certificate is not `Ready`.
+  1. The server is `containers/kubernetes-mcp-server`, pinned to an exact version (v0.0.69 or a newer one chosen on purpose) and not `@latest`.
+  2. It runs with `--config` pointing at a TOML file in the repo that sets `read_only = true`, limits `toolsets` to what the agent needs, and lists `Secret` under `denied_resources`. The file holds no secret.
+  3. It authenticates with a kubeconfig for a dedicated service account, using a short-lived token, passed through `KUBECONFIG`. The kubeconfig is gitignored.
+  4. The role is a custom one that grants only get, list and watch on `Certificate`, `CertificateRequest`, `Order`, `Challenge`, `ClusterIssuer`, and on pods and events in the add-on namespaces. It is not the built-in `view` or `cluster-reader` role.
+  5. A request to read a Secret, or to create, change or delete anything, is refused. Each protection is tested alone: with the role loosened the config still refuses, and with the config loosened the role still refuses.
+  6. An agent can use it to report why a certificate is not `Ready`.
 
 **Exit criterion:** both issuers are `Ready`, the NLB has an address, and the Kubernetes MCP server reports the issuers' state. The first certificate is issued in Phase 5, once the DNS record exists.
 
@@ -417,4 +419,5 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 
 ## 9. Open questions
 
-1. **Podium TLS on Kubernetes.** Podium's docs describe where the CA lives for `podiumctl`'s container mode and for standalone mode. Where it lives in a pod, and that it survives a restart on the volume, is confirmed in P5.5.
+1. **Kubernetes MCP server settings.** The settings above come from the project's README and docs as read on 2026-10-24. P4.4 re-checks the option names against the pinned version before relying on them.
+2. **Podium TLS on Kubernetes.** Podium's docs describe where the CA lives for `podiumctl`'s container mode and for standalone mode. Where it lives in a pod, and that it survives a restart on the volume, is confirmed in P5.5.
