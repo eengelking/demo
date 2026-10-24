@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 
 ## Project Overview
 
-What this project is, who it's for, and why it exists is in [`PROJECT.md`](PROJECT.md). Read it before starting work. That file also holds this project's own rules (extra Do Nots, workflow overrides, skills, standards, release steps). They apply on top of this file. A rule there may add to this file and may override workflow mechanics (how a branch is made, what closes an issue, extra checks around a PR, release steps) when it says it overrides this file. It may not relax anything under Do Not; where the two conflict on that, this file wins.
+What this project is, who it's for, and why it exists is in [`PROJECT.md`](PROJECT.md), which is imported here: @PROJECT.md. Read it before starting work. That file also holds this project's own rules (extra Do Nots, workflow overrides, skills, standards, release steps). They apply on top of this file. A rule there may add to this file and may override workflow mechanics (how a branch is made, what closes an issue, extra checks around a PR, release steps) when it says it overrides this file. It may not relax anything under Do Not; where the two conflict on that, this file wins.
 
 **If `/init` has been started, do not write project information into this file.** This file is the standard policy document and `/init` must leave it as it is. Put everything `/init` would produce (the overview, and any project-specific notes it finds) in `PROJECT.md` instead, creating that file if it doesn't exist. Not how it's built: that is `docs/ARCHITECTURE.md`.
 
