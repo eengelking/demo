@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
-    "eengelking@eengelking-marketplace": true
+    "eengelking@eengelking-marketplace": true,
+    "cloudflare@claude-plugins-official": true
   }
 }
