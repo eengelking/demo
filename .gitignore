@@ -1,0 +1,20 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.terraform.lock.hcl.bak
+
+# Secrets and local config
+.env
+.env.*
+kubeconfig*
+*.pem
+*.key
+
+# Build and run output
+logs/
+*.log
+.DS_Store
