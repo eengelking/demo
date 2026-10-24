@@ -4,6 +4,7 @@
 |---|---|---|
 | 0.1 | 2026-10-24 | First draft. |
 | 0.2 | 2026-10-24 | Cloudflare DNS moves out of Terraform into an agent and a skill. Adds the reporter port (4318) and the DNS-only hostname, the DNS-01 secret handling, agent-safe Terraform execution, the image build task, the Kubernetes MCP task, a single node on Kubernetes 1.37. Still provisional until the open questions in section 9 are answered. |
+| 0.3 | 2026-10-24 | cert-manager uses the HTTP-01 solver, so no Cloudflare token is stored in the cluster. The first certificate test moves after the DNS record exists. |
 
 This project stands up a hardened Kubernetes platform on AWS from nothing and deploys [Podium](https://github.com/eengelking/podium) onto it. Terraform creates the network and an EKS cluster. Ansible hardens the nodes and keeps them hardened as they are replaced. Argo CD is bootstrapped and deploys Podium from a Helm chart in this repo. cert-manager issues a Let's Encrypt certificate for `demo.edengelking.com`.
 
@@ -54,7 +55,7 @@ One person runs it from a workstation with short-lived AWS credentials. The repo
 | GitOps | Argo CD, app-of-apps, tracking `development` until the first release | One bootstrap app owns the rest. `main` has nothing to sync before a release. |
 | Ingress | ingress-nginx behind an NLB | Terminates TLS on 443 for the console. Buffering and timeouts are configurable for Podium's server-sent events. |
 | Reporter port | NLB TCP listener on 4318, passed straight to the pod | Podium's reporter port uses its own CA and client certificates. Anything that terminates TLS would break it. |
-| Certificates | cert-manager, DNS-01 solver, one `staging`/`prod` variable | Chosen by the maintainer. The solver needs a scoped Cloudflare API token in a cluster Secret. |
+| Certificates | cert-manager, HTTP-01 solver, one `staging`/`prod` variable | No Cloudflare token in the cluster. Needs the DNS record to point at the NLB and port 80 to be reachable, which the DNS-only record allows. |
 | DNS | Cloudflare, DNS-only record, managed by an agent and a skill through the Cloudflare MCP server | Shows an agent with a narrow job and guardrails. |
 | Cluster introspection | A Kubernetes MCP server, read-only | Lets an agent check cert-manager resources without a shell on the cluster. |
 | App packaging | A small Helm chart in this repo | Argo CD renders it. Values carry the hostname, image and settings. |
@@ -123,7 +124,6 @@ The ingress sets proxy buffering off and long read and send timeouts, because th
 | Secret | Created by | Where it lives | Seen by Claude |
 |---|---|---|---|
 | Podium token | Terraform (random value) | Kubernetes Secret, and Terraform state | No |
-| Cloudflare token for cert-manager | `scripts/set-cloudflare-token.sh`, which reads it from a hidden prompt the user types into | Kubernetes Secret only | No |
 | AWS credentials | The user, with a named profile and short-lived credentials | `~/.aws`, never in a variable | No |
 
 The Podium token is in Terraform state, so the state bucket is encrypted, versioned and not public. This is an accepted risk, recorded in `docs/DECISIONS.md`. `scripts/get-podium-token.sh` reads the Secret with `kubectl` and writes `.secrets/podium-token` with mode `0600`.
@@ -294,13 +294,12 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
   3. The controller configuration sets proxy buffering off and read and send timeouts of at least one hour for the Podium ingress.
 
 #### P4.3 cert-manager and issuers
-- **Scope:** an Argo CD Application for cert-manager, the `ClusterIssuer` for staging and prod under `gitops/`, and `scripts/set-cloudflare-token.sh`.
-- **Depends on (in-phase):** P4.1
+- **Scope:** an Argo CD Application for cert-manager and the `ClusterIssuer` for staging and prod under `gitops/`, both using the HTTP-01 solver through ingress-nginx.
+- **Depends on (in-phase):** P4.1, P4.2
 - **Acceptance:**
-  1. Both issuers exist, and the active one is chosen by `letsencrypt_env` alone.
-  2. `scripts/set-cloudflare-token.sh` reads the token from a hidden prompt, creates the Secret in the cert-manager namespace, and prints nothing from it. The token is never an argument, an environment variable or a file.
-  3. The token does not appear in Argo CD, in Git or in any log.
-  4. A test `Certificate` against the staging issuer reaches `Ready` for a name in the zone.
+  1. Both issuers exist and show `Ready` with an ACME account registered, and the active one is chosen by `letsencrypt_env` alone.
+  2. The solver needs no credential, and no Secret in the cluster holds a Cloudflare token.
+  3. Port 80 on the NLB reaches the ingress controller, so a challenge request for `/.well-known/acme-challenge/` can be served.
 
 #### P4.4 Kubernetes MCP server
 - **Scope:** the MCP server configuration in `.mcp.json` and the read-only service account it uses. Nothing else in the cluster.
@@ -310,7 +309,7 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
   2. A request to read a Secret, or to create, change or delete anything, is refused.
   3. An agent can use it to report why a certificate is not `Ready`.
 
-**Exit criterion:** a test `Certificate` for a name in the zone becomes `Ready` through the staging issuer, the NLB has an address, and the Kubernetes MCP server reports the certificate's state.
+**Exit criterion:** both issuers are `Ready`, the NLB has an address, and the Kubernetes MCP server reports the issuers' state. The first certificate is issued in Phase 5, once the DNS record exists.
 
 ### Phase 5 — Podium and DNS
 
@@ -344,7 +343,7 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 
 #### P5.4 DNS agent and skill
 - **Scope:** `.claude/agents/` and `.claude/skills/` for the DNS work. No Terraform, no cluster resources.
-- **Depends on (in-phase):** P4.4
+- **Depends on (in-phase):** none in this phase. Needs P4.2 (the NLB address) and P4.4 (the Kubernetes MCP server) from Phase 4.
 - **Acceptance:**
   1. The agent's tool list contains only the Cloudflare MCP tools, the Kubernetes MCP tools and read-only shell lookups. It has no Terraform and no file-writing tools.
   2. Asked to point `demo.edengelking.com` at the NLB, it reads the NLB address from the cluster, makes the change through the skill, and confirms it with a DNS lookup.
@@ -357,8 +356,8 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 - **Scope:** the production certificate, the reporter port, and the checks for both. No new components.
 - **Depends on (in-phase):** P5.3, P5.4
 - **Acceptance:**
-  1. With the staging issuer, `curl` to `https://demo.edengelking.com/` returns Podium's page with the staging certificate.
-  2. With the prod issuer, the browser shows a trusted certificate. The agent uses the Kubernetes MCP server to confirm the `Certificate` is `Ready` before and after the switch.
+  1. With the DNS record in place and the staging issuer, the `Certificate` reaches `Ready`, and `curl` to `https://demo.edengelking.com/` returns Podium's page with the staging certificate.
+  2. With the prod issuer, the browser shows a trusted certificate. The agent uses the Kubernetes MCP server to confirm the `Certificate` is `Ready` before and after the switch, and to report the failing `Challenge` if it is not.
   3. A reporter config created in Admin > People from the public address connects over 4318, and a Podium simulator session appears on the wall.
   4. A connection to 4318 without a client certificate is refused.
 
@@ -399,7 +398,7 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 - **Depends on (in-phase):** P6.1, P6.2, P6.3
 - **Acceptance:**
   1. The README has a quick start that a person can follow from an empty account, and a section on rate limits for the production issuer.
-  2. `docs/DECISIONS.md` has an entry for each decision named in this spec, including the DNS-only hostname and the DNS-01 choice.
+  2. `docs/DECISIONS.md` has an entry for each decision named in this spec, including the DNS-only hostname and the HTTP-01 choice.
   3. `docs/ARCHITECTURE.md` matches what was built, and says where it departs from this spec.
 
 **Exit criterion:** from an empty region, the documented sequence reaches a passing `scripts/verify.sh`, and `scripts/teardown.sh` returns the region to empty.
@@ -419,4 +418,3 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 3. **Node size.** One node has to carry Argo CD, ingress-nginx, cert-manager and Podium. The instance type is chosen at P2.2.
 4. **Which Kubernetes MCP server.** Not chosen. P4.4 picks one that supports read-only access and records the choice in `docs/DECISIONS.md`.
 5. **Podium TLS on Kubernetes.** Podium's docs describe where the CA lives for `podiumctl`'s container mode and for standalone mode. Where it lives in a pod, and that it survives a restart on the volume, is confirmed in P5.5.
-6. **Cloudflare token scope.** The cert-manager token needs DNS edit access to one zone. Creating it is a step for the user, outside this repo.
