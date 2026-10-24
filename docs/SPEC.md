@@ -5,6 +5,7 @@
 | 0.1 | 2026-10-24 | First draft. |
 | 0.2 | 2026-10-24 | Cloudflare DNS moves out of Terraform into an agent and a skill. Adds the reporter port (4318) and the DNS-only hostname, the DNS-01 secret handling, agent-safe Terraform execution, the image build task, the Kubernetes MCP task, a single node on Kubernetes 1.37. Still provisional until the open questions in section 9 are answered. |
 | 0.3 | 2026-10-24 | cert-manager uses the HTTP-01 solver, so no Cloudflare token is stored in the cluster. The first certificate test moves after the DNS record exists. |
+| 0.4 | 2026-10-24 | Kubernetes 1.37 confirmed available. Node is a `c6i.xlarge`. The Kubernetes MCP server is `containers/kubernetes-mcp-server`, pinned, read-only, behind a custom role. AWS credentials are the user's named profile. |
 
 This project stands up a hardened Kubernetes platform on AWS from nothing and deploys [Podium](https://github.com/eengelking/podium) onto it. Terraform creates the network and an EKS cluster. Ansible hardens the nodes and keeps them hardened as they are replaced. Argo CD is bootstrapped and deploys Podium from a Helm chart in this repo. cert-manager issues a Let's Encrypt certificate for `demo.edengelking.com`.
 
@@ -48,7 +49,8 @@ One person runs it from a workstation with short-lived AWS credentials. The repo
 | Infrastructure | Terraform 1.17 | State, plan review and drift detection. Separate roots per concern keep a destroy of one from touching the others. |
 | State | S3 bucket with native locking (`use_lockfile`) | No DynamoDB table to create and tear down. |
 | Region and arch | `us-west-2`, amd64 | Chosen by the maintainer. |
-| Kubernetes | EKS 1.37 if available, one managed node | Chosen by the maintainer. The version is checked at P2.2. |
+| Kubernetes | EKS 1.37, one managed node | Chosen by the maintainer. Availability in EKS is confirmed. |
+| Node size | `c6i.xlarge` (4 vCPU, 8 GiB, amd64) | Meets the stated size. About $0.17 an hour on demand in `us-west-2` per a third-party price listing, to be confirmed against AWS pricing. `c7i.xlarge` is the newer generation at a few percent more. |
 | Node OS | Amazon Linux 2023 EKS-optimized AMI | SSM agent is present, and a CIS benchmark exists for it. |
 | Hardening | Ansible, applied through an SSM association | Re-applies to nodes the group replaces. A one-time run would be lost on the next recycle. |
 | Storage | EBS CSI driver add-on, `gp3` StorageClass | Podium's SQLite volume needs a PersistentVolumeClaim. |
@@ -57,7 +59,7 @@ One person runs it from a workstation with short-lived AWS credentials. The repo
 | Reporter port | NLB TCP listener on 4318, passed straight to the pod | Podium's reporter port uses its own CA and client certificates. Anything that terminates TLS would break it. |
 | Certificates | cert-manager, HTTP-01 solver, one `staging`/`prod` variable | No Cloudflare token in the cluster. Needs the DNS record to point at the NLB and port 80 to be reachable, which the DNS-only record allows. |
 | DNS | Cloudflare, DNS-only record, managed by an agent and a skill through the Cloudflare MCP server | Shows an agent with a narrow job and guardrails. |
-| Cluster introspection | A Kubernetes MCP server, read-only | Lets an agent check cert-manager resources without a shell on the cluster. |
+| Cluster introspection | `containers/kubernetes-mcp-server`, pinned to a version, started with `--read-only` | Lets an agent check cert-manager resources without a shell on the cluster. Its default is full cluster control, so the limits come from a flag and a role, not from the server. |
 | App packaging | A small Helm chart in this repo | Argo CD renders it. Values carry the hostname, image and settings. |
 | Image registry | GitHub Container Registry, public package | No pull secret needed. |
 | Scripting | Bash, `make` | One script or target per stage. |
@@ -124,7 +126,7 @@ The ingress sets proxy buffering off and long read and send timeouts, because th
 | Secret | Created by | Where it lives | Seen by Claude |
 |---|---|---|---|
 | Podium token | Terraform (random value) | Kubernetes Secret, and Terraform state | No |
-| AWS credentials | The user, with a named profile and short-lived credentials | `~/.aws`, never in a variable | No |
+| AWS credentials | The user configures a named profile with short-lived credentials | `~/.aws`, never in a variable | No |
 
 The Podium token is in Terraform state, so the state bucket is encrypted, versioned and not public. This is an accepted risk, recorded in `docs/DECISIONS.md`. `scripts/get-podium-token.sh` reads the Secret with `kubectl` and writes `.secrets/podium-token` with mode `0600`.
 
@@ -154,8 +156,8 @@ All inputs are Terraform variables with a `terraform.tfvars.example` that is saf
 | `podium_hostname` | `demo.edengelking.com`. |
 | `podium_image` | A GHCR image reference. It must be `linux/amd64`. No default. |
 | `letsencrypt_env` | `staging` or `prod`. Defaults to `staging`. |
-| `kubernetes_version` | Defaults to `1.37` if available. |
-| `node_instance_type` | One amd64 node large enough for Argo CD, ingress-nginx, cert-manager and Podium. |
+| `kubernetes_version` | Defaults to `1.37`. |
+| `node_instance_type` | Defaults to `c6i.xlarge`. |
 | `gitops_revision` | The branch Argo CD tracks. Defaults to `development`. |
 | `budget_limit_usd`, `budget_email` | The budget alarm. |
 
@@ -226,11 +228,11 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 - **Scope:** `terraform/cluster/` EKS, node group, IAM roles. Not the add-ons and not the SSM association.
 - **Depends on (in-phase):** P2.1
 - **Acceptance:**
-  1. The cluster runs the version in `kubernetes_version`. If EKS does not offer 1.37 yet, the plan fails with a message naming the versions it does offer.
+  1. The cluster runs the version in `kubernetes_version`. If EKS does not offer it, the plan fails with a message naming the versions it does offer.
   2. A managed node group with one Amazon Linux 2023 amd64 node joins, and `kubectl get nodes` shows it `Ready`.
   3. The node carries the tag the hardening association targets, and has the SSM managed-instance policy attached.
   4. `aws eks update-kubeconfig` produces a working context, and the script that does it does not print credentials.
-  5. The instance type is a variable, and the one chosen leaves memory free after Argo CD, ingress-nginx, cert-manager and Podium are running.
+  5. The instance type is `node_instance_type`, and with Argo CD, ingress-nginx, cert-manager and Podium running, `kubectl top node` shows memory still free.
 
 #### P2.3 EBS CSI driver and StorageClass
 - **Scope:** the EBS CSI add-on and its IAM role (Pod Identity or IRSA) in `terraform/cluster/`, plus the `gp3` StorageClass.
@@ -302,12 +304,14 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
   3. Port 80 on the NLB reaches the ingress controller, so a challenge request for `/.well-known/acme-challenge/` can be served.
 
 #### P4.4 Kubernetes MCP server
-- **Scope:** the MCP server configuration in `.mcp.json` and the read-only service account it uses. Nothing else in the cluster.
+- **Scope:** the MCP server entry in `.mcp.json`, plus the service account, custom role and kubeconfig it uses. Nothing else in the cluster.
 - **Depends on (in-phase):** none — ready to start
 - **Acceptance:**
-  1. The server can list and describe `Certificate`, `CertificateRequest`, `Order` and `Challenge` resources, and pods and events in the add-on namespaces.
-  2. A request to read a Secret, or to create, change or delete anything, is refused.
-  3. An agent can use it to report why a certificate is not `Ready`.
+  1. The server is `containers/kubernetes-mcp-server`, pinned to an exact version and not `@latest`, and started with `--read-only`.
+  2. It authenticates with a kubeconfig for a dedicated service account, using a short-lived token. The kubeconfig is gitignored.
+  3. The role is a custom one that grants only get, list and watch on `Certificate`, `CertificateRequest`, `Order`, `Challenge`, `ClusterIssuer`, and on pods and events in the add-on namespaces. It is not the built-in `view` or `cluster-reader` role.
+  4. A request to read a Secret, or to create, change or delete anything, is refused, and the test shows the refusal comes from the role as well as from the flag.
+  5. An agent can use it to report why a certificate is not `Ready`.
 
 **Exit criterion:** both issuers are `Ready`, the NLB has an address, and the Kubernetes MCP server reports the issuers' state. The first certificate is issued in Phase 5, once the DNS record exists.
 
@@ -413,8 +417,4 @@ Phases run in order. Each ends in a state someone can observe. Tasks inside a ph
 
 ## 9. Open questions
 
-1. **AWS credentials.** Short-lived credentials, method not decided. The tool only requires that `aws sts get-caller-identity` works for the named profile.
-2. **Kubernetes 1.37.** Whether EKS offers it cannot be checked until the AWS CLI is configured. P2.2 fails with a clear message if it does not, and the version is a variable.
-3. **Node size.** One node has to carry Argo CD, ingress-nginx, cert-manager and Podium. The instance type is chosen at P2.2.
-4. **Which Kubernetes MCP server.** Not chosen. P4.4 picks one that supports read-only access and records the choice in `docs/DECISIONS.md`.
-5. **Podium TLS on Kubernetes.** Podium's docs describe where the CA lives for `podiumctl`'s container mode and for standalone mode. Where it lives in a pod, and that it survives a restart on the volume, is confirmed in P5.5.
+1. **Podium TLS on Kubernetes.** Podium's docs describe where the CA lives for `podiumctl`'s container mode and for standalone mode. Where it lives in a pod, and that it survives a restart on the volume, is confirmed in P5.5.
